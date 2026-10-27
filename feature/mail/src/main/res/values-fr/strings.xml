@@ -132,7 +132,7 @@
     <string name="swipe_confirm_cancel">Annuler</string>
     <string name="gestures">Balayage des lignes</string>
     <plurals name="label_new_applies">
-        <item quantity="one">Le nouveau libellé est ajouté à cette conversation.</item>
+        <item quantity="one">Le nouveau libellé est ajouté à %1$d conversation.</item>
         <item quantity="many">Le nouveau libellé est ajouté aux %1$d conversations sélectionnées.</item>
         <item quantity="other">Le nouveau libellé est ajouté aux %1$d conversations sélectionnées.</item>
     </plurals>

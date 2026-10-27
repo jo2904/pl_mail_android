@@ -153,7 +153,7 @@
     <string name="accounts_attention_generic">Ce compte demande votre attention. Ouvrez plMail sur le web pour voir ce qui ne va pas.</string>
     <string name="accounts_server_backfill_all">Il a tout récupéré.</string>
     <plurals name="accounts_server_backfill_reached">
-        <item quantity="one">Il a récupéré le message le plus récent.</item>
+        <item quantity="one">Il a récupéré %1$d message, le plus récent.</item>
         <item quantity="many">Il a récupéré les %1$d messages les plus récents.</item>
         <item quantity="other">Il a récupéré les %1$d messages les plus récents.</item>
     </plurals>
