@@ -82,6 +82,22 @@ class ComposeInputTest {
         assertEquals("a@x.test", "  a@x.test  ".parseAddresses().single().email)
     }
 
+    @Test
+    fun `a shared entry with a space in it is refused, not split into a stranger`() {
+        // Share intents and mailto: links are written by programs, one entry per
+        // comma. `anna lists@example.org` is a broken `anna+lists@…`; splitting it
+        // on the space would write to lists@example.org, somebody else. This used
+        // to be accepted whole, as one address with a space in it.
+        assertTrue("anna lists@example.org".parseAddresses().isEmpty())
+    }
+
+    @Test
+    fun `mailto in front of an address is not part of it`() {
+        // Accepted before as the address `mailto:jo@jo.fr`, which no server takes.
+        assertEquals(listOf("jo@jo.fr"), "mailto:jo@jo.fr".parseAddresses().map { it.email })
+        assertEquals(listOf("jo@jo.fr"), "<MAILTO:jo@jo.fr>".parseAddresses().map { it.email })
+    }
+
     // ----------------------------------------------------------- the quote
 
     @Test

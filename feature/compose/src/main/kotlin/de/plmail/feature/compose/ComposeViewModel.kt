@@ -986,9 +986,9 @@ internal fun ComposeDraft.sealedFor(plan: EncryptionPlan, identity: SendIdentity
  * identity, and files that are already on disk. That makes it the piece a test can actually hold —
  * the ViewModel around it needs a database, a client pool and a send queue to exist at all.
  *
- * Addresses go through [parseAddresses], the same parser the recipient field uses on pasted text,
- * so `Name <address>` and semicolon-separated lists work here for free and an address that would be
- * refused is refused in one place rather than two.
+ * Addresses go through [parseAddresses], which decides what an address is with the same rules as
+ * the recipient field, so `Name <address>` and semicolon-separated lists work here for free and an
+ * address that would be refused is refused by one set of rules rather than two.
  */
 internal fun ComposeRequest.Share.asDraft(identity: SendIdentity): ComposeDraft =
     ComposeDraft(

@@ -578,28 +578,93 @@ private val THUMB_WIDTH = 3.dp
 private const val MIN_THUMB = 0.12f
 
 /**
- * Turns typed text into addresses.
+ * Turns a list of addresses that arrived as text into addresses — from a share intent or a
+ * `mailto:` link, one entry per comma, semicolon or line.
  *
- * Accepts the `Name <address>` form as well as a bare address, because that is what pasting from
- * another mail client gives you. Anything with no `@` at all is dropped rather than sent: an
- * address the server would reject arrives back as a submission failure minutes later, by which
- * point the composer is long closed.
+ * Accepts the `Name <address>` form as well as a bare address, because that is what other apps and
+ * clients hand over. Anything that is not an address is dropped rather than sent: an address the
+ * server would reject arrives back as a submission failure minutes later, by which point the
+ * composer is long closed.
+ *
+ * **A space does not separate here**, unlike in [recipientPieces]. These lists were written by a
+ * program, not typed, and a space inside one entry means the entry is broken — `URLDecoder` turning
+ * `anna+lists@example.org` into `anna lists@example.org` is the case [Mailto] documents. Splitting
+ * on it would turn that into a mail to `lists@example.org`, a stranger, where refusing it loses a
+ * recipient visibly.
  */
 internal fun String.parseAddresses(): List<EmailAddress> =
     splitAddresses()
         .map { it.trim().trim(' ', ',', ';') }
         .filter { it.isNotEmpty() }
-        .mapNotNull { entry ->
-            val angled = Regex("""^(.*?)<([^>]+)>$""").find(entry)
+        .mapNotNull { it.asRecipient() }
 
-            val name = angled?.groupValues?.get(1)?.trim()?.trim('"')?.takeIf { it.isNotEmpty() }
-            val address = (angled?.groupValues?.get(2) ?: entry).trim()
+/**
+ * One recipient as somebody wrote it, and what it means.
+ *
+ * [address] is null for a piece that is not an address. The piece is kept either way, because a
+ * piece that is not an address is still something the user wrote, and it goes back into the field
+ * for them to correct rather than disappearing.
+ */
+internal data class RecipientPiece(val text: String, val address: EmailAddress?)
 
-            if (!address.contains('@') || address.count { it == '@' } != 1) return@mapNotNull null
-            if (address.startsWith('@') || address.endsWith('@')) return@mapNotNull null
+/**
+ * Picks the recipients out of typed or pasted text, the way the web composer does (pl_mail#379).
+ *
+ * **Each recipient is found, rather than the text being cut on separators.** A recipient is either
+ * a name followed by `<address>` — the name may hold spaces, and commas inside quotes — or a run
+ * with no space in it. So `;`, `,`, a new line, a space and a tab all separate addresses, while
+ * `Jean Dupont <jd@x.fr>` and `"Doe, Jane" <jane@doe.fr>` each stay one recipient. Cutting on the
+ * separators cannot do both: a space has to split `a@x.fr b@y.fr` and must not split `Jean Dupont`.
+ *
+ * **A name has no `@` outside quotes.** Without that rule the name runs back over whatever precedes
+ * it, and `jo@jo.fr Jean Dupont <jd@x.fr>` became one recipient called "jo@jo.fr Jean Dupont" —
+ * jo@jo.fr was never written to at all.
+ *
+ * Characters that belong to no recipient — the separators, a stray quote, a `<` that never closes —
+ * are skipped, as on the web.
+ */
+internal fun String.recipientPieces(): List<RecipientPiece> =
+    RECIPIENT.findAll(this)
+        .map { it.value.trim() }
+        .filter { it.isNotEmpty() }
+        .map { piece -> RecipientPiece(text = piece, address = piece.asRecipient()) }
+        .toList()
 
-            EmailAddress(name = name, email = address)
-        }
+/**
+ * The web composer's pattern, unchanged: `(?:"[^"]*"|[^<>"@;,\r\n])*<[^<>]*>|[^\s<>;,"]+`.
+ *
+ * The two alternatives of the name part cannot match the same character — one starts with a quote,
+ * the other excludes it — so a failed match costs a pass over the run, not a combinatorial search.
+ */
+private val RECIPIENT = Regex("""(?:"[^"]*"|[^<>"@;,\r\n])*<[^<>]*>|[^\s<>;,"]+""")
+
+private val ANGLED = Regex("""^(.*?)<([^<>]*)>$""")
+
+private val MAILTO = Regex("""^mailto:""", RegexOption.IGNORE_CASE)
+
+/**
+ * One entry — `Name <address>`, `<address>` or a bare address — as an address, or null.
+ *
+ * `mailto:` in front is dropped: it is what a link copied out of a web page carries, and the
+ * address under it is perfectly good.
+ *
+ * **What counts as an address is deliberately loose**: one `@`, something on each side, no space.
+ * The web composer also wants a dot in the domain, and this does not: plMail is self-hosted, and
+ * `anna@nas` on a home network is an address its owner really uses. Anything stricter is the
+ * server's to say, and it does.
+ */
+private fun String.asRecipient(): EmailAddress? {
+    val angled = ANGLED.find(this)
+
+    val name = angled?.groupValues?.get(1)?.trim()?.trim('"')?.trim()?.takeIf { it.isNotEmpty() }
+    val address = (angled?.groupValues?.get(2) ?: this).trim().replace(MAILTO, "")
+
+    if (address.count { it == '@' } != 1) return null
+    if (address.startsWith('@') || address.endsWith('@')) return null
+    if (address.any { it.isWhitespace() }) return null
+
+    return EmailAddress(name = name, email = address)
+}
 
 /**
  * Splits on separators that are not inside a quoted display name or an angle-address.
