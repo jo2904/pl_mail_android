@@ -103,6 +103,13 @@ internal fun RecipientField(
     trailing: (@Composable () -> Unit)? = null,
     /** What a chip shows about its address's key (#9); null shows nothing. */
     lockOf: (EmailAddress) -> RecipientLock? = { null },
+    /**
+     * Text that was meant as a recipient and is not an address, for the composer to report.
+     *
+     * The text itself stays in the field, so it can be corrected; this is only the telling. The
+     * first piece of several, as on the web: one name is enough to find the line.
+     */
+    onRejected: (String) -> Unit = {},
 ) {
     var typed by remember { mutableStateOf("") }
     var isFocused by remember { mutableStateOf(false) }
@@ -112,18 +119,31 @@ internal fun RecipientField(
     // belonging to the field rather than as a panel that happened to appear.
     var fieldWidthPx by remember { mutableIntStateOf(0) }
 
-    fun commit(text: String = typed) {
-        val parsed = text.parseAddresses()
-        if (parsed.isEmpty()) return
+    fun apply(edit: RecipientEdit.Commit) {
+        if (edit.added.isNotEmpty()) onChanged(addresses + edit.added)
 
-        // De-duplicated against what is already on the line: adding the same
-        // person twice sends them two copies and reads as a bug in the sender's
-        // client rather than a slip.
-        val existing = addresses.mapNotNull { it.email?.lowercase() }.toSet()
-
-        onChanged(addresses + parsed.filter { it.email?.lowercase() !in existing })
-        typed = ""
+        typed = edit.remaining
         onQueryChanged("")
+
+        // What is not an address stays in the field and is said out loud. It
+        // used to be dropped without a word, and the mail went out without
+        // whoever it was meant for.
+        edit.rejected.firstOrNull()?.let(onRejected)
+    }
+
+    /**
+     * Enter, or the cursor leaving the line.
+     *
+     * Only Enter reports text with no address in it at all. Leaving the line with a half-typed name
+     * is a search abandoned, not a mistake to point out; pressing Enter on it is asking for a chip
+     * that cannot be made.
+     */
+    fun commit(isExplicit: Boolean) {
+        when (val edit = typed.commitRecipients(addresses)) {
+            is RecipientEdit.Commit -> apply(edit)
+            is RecipientEdit.Typing ->
+                if (isExplicit && typed.isNotBlank()) onRejected(typed.trim())
+        }
     }
 
     /**
@@ -202,13 +222,14 @@ internal fun RecipientField(
                 BasicTextField(
                     value = typed,
                     onValueChange = { value ->
-                        // A separator the user typed is a commit. Pasting "a@x, b@y"
-                        // therefore lands as two chips rather than one unusable string.
-                        if (value.endsWith(",") || value.endsWith(";") || value.endsWith(" ")) {
-                            commit(value)
-                        } else {
-                            typed = value
-                            onQueryChanged(value)
+                        // A separator the user typed, or a pasted list, is a commit;
+                        // see recipientEdit for which is which.
+                        when (val edit = recipientEdit(typed, value, addresses)) {
+                            is RecipientEdit.Commit -> apply(edit)
+                            is RecipientEdit.Typing -> {
+                                typed = edit.text
+                                onQueryChanged(edit.text)
+                            }
                         }
                     },
                     singleLine = true,
@@ -219,7 +240,7 @@ internal fun RecipientField(
                             keyboardType = KeyboardType.Email,
                             imeAction = ImeAction.Done,
                         ),
-                    keyboardActions = KeyboardActions(onDone = { commit() }),
+                    keyboardActions = KeyboardActions(onDone = { commit(isExplicit = true) }),
                     modifier =
                         Modifier.then(
                                 // Exactly, rather than at least: a text field has
@@ -240,7 +261,7 @@ internal fun RecipientField(
                                 // this exists for: without it the address being
                                 // typed is silently dropped and the mail goes to
                                 // whoever was already chipped, or to nobody.
-                                if (!focus.isFocused) commit()
+                                if (!focus.isFocused) commit(isExplicit = false)
                             },
                 )
             }
@@ -629,6 +650,97 @@ internal fun String.recipientPieces(): List<RecipientPiece> =
         .filter { it.isNotEmpty() }
         .map { piece -> RecipientPiece(text = piece, address = piece.asRecipient()) }
         .toList()
+
+/** What a change to the address line means. */
+internal sealed interface RecipientEdit {
+
+    /** Nothing to make chips of: the text stays as it is, and is looked up among contacts. */
+    data class Typing(val text: String) : RecipientEdit
+
+    /**
+     * Chips to add, and what the field keeps.
+     *
+     * [rejected] is every piece that is not an address, for the field to report; [remaining] is the
+     * same pieces, back in the field for the user to correct.
+     */
+    data class Commit(
+        val added: List<EmailAddress>,
+        val remaining: String,
+        val rejected: List<String>,
+    ) : RecipientEdit
+}
+
+/**
+ * What changing the line from [previous] to [value] means, with [existing] already chipped.
+ *
+ * **A typed character commits only when it ends a recipient** — a separator or a space. Committing
+ * on anything else would chip `jo@x` while the user is still typing `jo@x.fr`, because `jo@x` is
+ * already an address. **A paste commits at once**, because nothing more is coming: a list copied
+ * out of another client rarely ends in a separator, and used to sit in the field as text until
+ * Enter. A paste is told apart from typing by size, which is all a text field reports: more than
+ * one character arriving at once.
+ *
+ * **Text with no address in it is never a commit.** `Jean ` is somebody typing a name to look up;
+ * committing it found nothing and returned without keeping the space, so a two-word name could not
+ * be searched for at all. A single plain address pasted on its own is left as text too, as it
+ * always was, so the suggestions still open on it.
+ */
+internal fun recipientEdit(
+    previous: String,
+    value: String,
+    existing: List<EmailAddress>,
+): RecipientEdit {
+    // Deleting never commits: backspacing to just after a space would chip
+    // what is in front of it.
+    if (value.length <= previous.length) return RecipientEdit.Typing(value)
+
+    val isPaste = value.length - previous.length > 1
+    val endsPiece = value.last().let { it == ',' || it == ';' || it.isWhitespace() }
+
+    if (!isPaste && !endsPiece) return RecipientEdit.Typing(value)
+
+    // An angle-address or a quoted name still being written by hand: the
+    // space in `Jean <jd@x` must not cut it into three pieces.
+    if (
+        value.count { it == '<' } > value.count { it == '>' } || value.count { it == '"' } % 2 == 1
+    ) {
+        return RecipientEdit.Typing(value)
+    }
+
+    val pieces = value.recipientPieces()
+    val single = pieces.singleOrNull()
+
+    if (!endsPiece && single != null && single.text == single.address?.email) {
+        return RecipientEdit.Typing(value)
+    }
+
+    return value.commitRecipients(existing)
+}
+
+/**
+ * Makes chips of every address in [this]: what Enter, losing focus and a pasted list all do.
+ *
+ * Duplicates are dropped without regard to case, against [existing] and within the text itself: the
+ * same person twice is sent two copies, which reads as a bug in the sender's client rather than a
+ * slip. Text with no address in it at all is left exactly as typed — re-joining its pieces would
+ * turn `Jean Dupont` into `Jean; Dupont`.
+ */
+internal fun String.commitRecipients(existing: List<EmailAddress>): RecipientEdit {
+    val pieces = recipientPieces()
+
+    if (pieces.none { it.address != null }) return RecipientEdit.Typing(this)
+
+    val taken = existing.mapNotNull { it.email?.lowercase() }.toMutableSet()
+    val added =
+        pieces.mapNotNull { it.address }.filter { taken.add(it.email.orEmpty().lowercase()) }
+    val rejected = pieces.filter { it.address == null }.map { it.text }
+
+    return RecipientEdit.Commit(
+        added = added,
+        remaining = rejected.joinToString("; "),
+        rejected = rejected,
+    )
+}
 
 /**
  * The web composer's pattern, unchanged: `(?:"[^"]*"|[^<>"@;,\r\n])*<[^<>]*>|[^\s<>;,"]+`.

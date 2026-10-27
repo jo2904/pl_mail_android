@@ -500,6 +500,11 @@ constructor(
 
     fun dismissError() = _state.update { it.copy(error = null) }
 
+    /** An address line kept text that is not an address; see [ComposeError.NotAnAddress]. */
+    fun reportNotAnAddress(text: String) = _state.update {
+        it.copy(error = ComposeError.NotAnAddress(text))
+    }
+
     /**
      * Puts the composer back to nothing once the message it held has been dealt with — saved,
      * discarded or handed to the queue.

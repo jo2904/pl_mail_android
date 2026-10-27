@@ -69,6 +69,8 @@ internal fun ComposeHeader(
     onShowCopyFields: () -> Unit,
     onQueryChanged: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Text left in an address line that is not an address; see [RecipientField]. */
+    onRejected: (String) -> Unit = {},
 ) {
     val toField = remember { FocusRequester() }
 
@@ -116,6 +118,7 @@ internal fun ComposeHeader(
             lockOf = state::lockOf,
             suggestions = state.suggestions,
             onQueryChanged = onQueryChanged,
+            onRejected = onRejected,
             focusRequester = toField,
             // At the end of the To line rather than on a row of its own beneath
             // it. It is an affordance about this line, and a whole row for one
@@ -136,6 +139,7 @@ internal fun ComposeHeader(
                 lockOf = state::lockOf,
                 suggestions = state.suggestions,
                 onQueryChanged = onQueryChanged,
+                onRejected = onRejected,
             )
 
             RecipientField(
@@ -145,6 +149,7 @@ internal fun ComposeHeader(
                 lockOf = state::lockOf,
                 suggestions = state.suggestions,
                 onQueryChanged = onQueryChanged,
+                onRejected = onRejected,
             )
         }
 
